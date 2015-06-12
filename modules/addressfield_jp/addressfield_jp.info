@@ -1,0 +1,8 @@
+name = Address Field Plugin for Japan
+description = This module provides a user friendly Japanese postcode check and address lookup for address field.
+core = 7.x
+package = Fields
+dependencies[] = ctools
+dependencies[] = addressfield
+
+configure = admin/config/people/addressfield-jp

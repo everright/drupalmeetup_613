@@ -1,0 +1,19 @@
+<?php
+
+/**
+ * @file
+ * Install, update, and uninstall functions for the address_field_jp module.
+ */
+
+/**
+ * Implements hook_uninstall().
+ */
+function addressfield_jp_uninstall() {
+  // Delete unused variables.
+  variable_del('addressfield_jp_ajaxzip_http');
+  variable_del('addressfield_jp_ajaxzip_json_http');
+  variable_del('addressfield_jp_ajaxzip_https');
+  variable_del('addressfield_jp_ajaxzip_json_https');
+  variable_del('addressfield_jp_invalid_postal_code');
+  variable_del('addressfield_jp_lookup_link_text');
+}

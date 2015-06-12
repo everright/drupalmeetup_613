@@ -1,0 +1,457 @@
+<?php
+
+/**
+ * @file
+ * Defines the plugin for the Japanese postcode check and address lookup.
+ */
+
+define('ADDRESSFIELD_JP_AJAXZIP_HTTP', 'http://ajaxzip3.github.io/ajaxzip3.js');
+define('ADDRESSFIELD_JP_AJAXZIP_HTTPS', 'https://ajaxzip3.github.io/ajaxzip3.js');
+define('ADDRESSFIELD_JP_EXCLUDE_CODES', '000,008,009,032,117,118,119,122,126,127,128,129,138,139,147,148,149,159,172,199,200,209,217,218,219,268,269,280,281,291,423,429,499,548,588,608,609,628,686,687,688,724,748,908,909,977,978');
+
+/**
+ * Implements hook_menu().
+ */
+function addressfield_jp_menu() {
+  $items = array();
+  $items['admin/config/people/addressfield-jp'] = array(
+    'title' => 'Addressfield JP',
+    'description' => 'Configure how the addressfield JP service operates.',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('addressfield_jp_settings'),
+    'access arguments' => array('administer site configuration'),
+    'file' => 'inc/addressfield_jp.admin.inc',
+  );
+
+  return $items;
+}
+
+/**
+ * Implements hook_ctools_plugin_directory().
+ */
+function addressfield_jp_ctools_plugin_directory($module, $plugin) {
+  if ($module == 'addressfield') {
+    return 'plugins/' . $plugin;
+  }
+}
+
+/**
+ * Implements hook_field_attach_presave().
+ */
+function addressfield_jp_field_attach_presave($entity_type, $entity) {
+  $addressfields = addressfield_jp_addressfield_types();
+  foreach ($addressfields as $addressfield) {
+    if (!isset($entity->{$addressfield})) {
+      continue;
+    }
+    $language = empty($entity->language) ? LANGUAGE_NONE : $entity->language;
+    if (isset($entity->{$addressfield}[$language]) && is_array($entity->{$addressfield}[$language])) {
+      foreach ($entity->{$addressfield}[$language] as $delta => $fieldset) {
+        if (!empty($fieldset['jp_postal_code'])) {
+          $entity->{$addressfield}[$language][$delta]['postal_code'] = $fieldset['jp_postal_code'];
+        }
+      }
+    }
+  }
+}
+
+/**
+ * Implements hook_webform_submission_presave().
+ */
+function addressfield_jp_webform_submission_presave($node, &$submission) {
+  if (isset($node->webform['components'])) {
+    $preprocess_cids = array();
+    foreach ($node->webform['components'] as $cid => $field) {
+      if ($field['type'] == 'addressfield' && !empty($field['extra']['addressfield_jp_34digit'])) {
+        $preprocess_cids[$cid] = $cid;
+      }
+    }
+    if (!empty($preprocess_cids)) {
+      foreach ($preprocess_cids as $cid) {
+        if (empty($submission->data[$cid])) {
+          continue;
+        }
+        foreach ($submission->data[$cid] as $key => $data) {
+          $data = unserialize($data);
+          if (isset($data['jp_postal_code'])) {
+            if (!empty($data['jp_postal_code'])) {
+              $data['postal_code'] = $data['jp_postal_code'];
+            }
+            unset($data['jp_postal_code']);
+          }
+        }
+        $submission->data[$cid][$key] = serialize($data);
+      }
+    }
+  }
+  file_put_contents('/tmp/test.txt', print_r($submission, TRUE));
+}
+
+/**
+ * Returns an array of the field names of any addressfields.
+ */
+function addressfield_jp_addressfield_types() {
+  $addressfields = &drupal_static(__FUNCTION__);
+  if (!isset($addressfields)) {
+    $addressfields = db_select('field_config', 'fc')
+      ->fields('fc', array('field_name'))
+      ->condition('fc.type', 'addressfield')
+      ->execute()
+      ->fetchCol();
+  }
+
+  return $addressfields;
+}
+
+/**
+ * Implements hook_form_FORM_ID_alter().
+ *
+ * Add a checkbox for 3-4 digit fromat of postal code on the 'Edit
+ * field instance' form.
+ */
+function addressfield_jp_form_field_ui_field_edit_form_alter(&$form, &$form_state, $form_id) {
+  $instance = $form['#instance'];
+  if ($instance['widget']['type'] != 'addressfield_standard' || $form['#field']['locked']) {
+    return;
+  }
+
+  $jp_34digit = FALSE;
+  if (isset($instance['widget']['settings']['addressfield_jp_34digit'])) {
+    $jp_34digit = $instance['widget']['settings']['addressfield_jp_34digit'];
+  }
+
+  $form['instance']['widget']['settings']['addressfield_jp_34digit'] = array(
+    '#type' => 'checkbox',
+    '#title' => t('Enable 3-4 digit format for Japanese postal code'),
+    '#description' => t('If checked, postal code field form will be extend as 2 form fields to support xxx-xxxx digit fromat.'),
+    '#default_value' => $jp_34digit,
+    // Visible when the 'addressfield_jp' checkbox is checked.
+    '#states' => array(
+      'visible' => array(
+        'input[name="instance[widget][settings][format_handlers][addressfield_jp]"]' => array(
+          'checked' => TRUE,
+        ),
+      ),
+    ),
+  );
+
+  array_unshift($form['#submit'], 'addressfield_jp_form_field_ui_field_edit_form_submit');
+}
+
+/**
+ * Implements hook_form_FORM_ID_alter().
+ *
+ * Add a checkbox for 3-4 digit fromat of postal code on the
+ * webform component settings form.
+ */
+function addressfield_jp_form_webform_component_edit_form_alter(&$form, $form_state, $form_id) {
+  if (!isset($form['type']['#value']) || $form['type']['#value'] != 'addressfield') {
+    return;
+  }
+
+  $jp_34digit = FALSE;
+  $component_id = 0;
+  if (isset($form['cid']['#value'])) {
+    $component_id = $form['cid']['#value'];
+  }
+
+  if (!empty($component_id) && isset($form['#node']->webform['components'][$component_id]['extra']['addressfield_jp_34digit'])) {
+    $jp_34digit = $form['#node']->webform['components'][$component_id]['extra']['addressfield_jp_34digit'];
+  }
+
+  $form['extra']['addressfield_jp_34digit'] = array(
+    '#type' => 'checkbox',
+    '#title' => t('Enable 3-4 digit format for Japanese postal code'),
+    '#description' => t('If checked, postal code field form will be extend as 2 form fields to support xxx-xxxx digit fromat.'),
+    '#default_value' => $jp_34digit,
+    // Visible when the 'addressfield_jp' checkbox is checked.
+    '#states' => array(
+      'visible' => array(
+        'input[name="extra[format_handlers][addressfield_jp]"]' => array(
+          'checked' => TRUE,
+        ),
+      ),
+    ),
+  );
+
+  if (isset($form['extra']['csv_separate'])) {
+    $form['extra']['csv_separate']['#weight'] = 0.1;
+  }
+
+  array_unshift($form['#submit'], 'addressfield_jp_form_webform_component_edit_form_submit');
+}
+
+/**
+ * Additional submit handler for the 'Edit field instance' form.
+ *
+ * Make sure the 3-4 digit fromat disabled when address_jp disabled.
+ */
+function addressfield_jp_form_field_ui_field_edit_form_submit($form, &$form_state) {
+  if (empty($form_state['values']['instance']['widget']['settings']['format_handlers']['addressfield_jp'])) {
+    $form_state['values']['instance']['widget']['settings']['addressfield_jp_34digit'] = 0;
+  }
+}
+
+/**
+ * Additional submit handler for the webform component setttings form.
+ *
+ * Make sure the 3-4 digit fromat disabled when address_jp disabled.
+ */
+function addressfield_jp_form_webform_component_edit_form_submit($form, &$form_state) {
+  if (empty($form_state['values']['extra']['format_handlers']['addressfield_jp'])) {
+    $form_state['values']['extra']['addressfield_jp_34digit'] = 0;
+  }
+}
+
+/**
+ * Implements hook_element_info().
+ */
+function addressfield_jp_element_info() {
+  $elements['addressfield_jp_postal_code'] = array(
+    '#input' => TRUE,
+    '#element_validate' => array('addressfield_jp_postal_code_validate'),
+    '#process' => array('addressfield_jp_postal_code_element_process'),
+    '#theme' => array('addressfield_jp_postal_code'),
+    '#theme_wrappers' => array('form_element'),
+  );
+  return $elements;
+}
+
+/**
+ * Expand a postal code field into two text boxes.
+ */
+function addressfield_jp_postal_code_element_process($element, $form_state, $complete_form) {
+  if (!empty($element['#value']) && is_string($element['#value'])) {
+    $element['#value'] = array(
+      'prefix' => substr($element['#value'], 0, 3),
+      'suffix' => substr($element['#value'], -4),
+    );
+  }
+  $element['prefix'] = array(
+    '#type' => 'textfield',
+    '#title' => t('Postal code prefix'),
+    '#title_display' => 'invisible',
+    '#value' => empty($element['#value']) ? NULL : $element['#value']['prefix'],
+    '#required' => $element['#required'],
+    '#attributes' => array('class' => array('postal-code-prefix')),
+    '#size' => 3,
+    '#maxlength' => 3,
+    '#field_suffix' => ' - ',
+  );
+
+  $element['suffix'] = array(
+    '#type' => 'textfield',
+    '#title' => t('Postal code suffix'),
+    '#title_display' => 'invisible',
+    '#value' => empty($element['#value']) ? NULL : $element['#value']['suffix'],
+    '#required' => $element['#required'],
+    '#attributes' => array('class' => array('postal-code-suffix')),
+    '#size' => 4,
+    '#maxlength' => 4,
+  );
+
+  return $element;
+}
+
+/**
+ * Validates a addressfield_jp_postal_code element.
+ */
+function addressfield_jp_postal_code_validate($element, &$element_state) {
+  $value = '';
+  if ($element['#type'] == 'addressfield_jp_postal_code') {
+    $prefix = trim($element['prefix']['#value']);
+    $suffix = trim($element['suffix']['#value']);
+
+    $empty = empty($prefix) || empty($suffix);
+    if ($empty && $element['#required'] && !empty($element_state['input'])) {
+      if (isset($element['#title'])) {
+        $replace = array('@name' => $element['#title']);
+        form_error($element, t('@name field is required.', $replace));
+      }
+      else {
+        form_error($element);
+      }
+    }
+    $value = $prefix . '-' . $suffix;
+  }
+  elseif ($element['#type'] == 'textfield') {
+    $value = $element['#value'];
+  }
+
+  if (!_addressfield_jp_postal_code_valid($value)) {
+    form_error($element, variable_get('addressfield_jp_invalid_postal_code', t('Invalid postal code format.')));
+  }
+
+  // Postal code field must be converted from a two-element array into a single
+  // string regardless of validation results.
+  if ($element['#type'] == 'addressfield_jp_postal_code') {
+    form_set_value($element['prefix'], NULL, $element_state);
+    form_set_value($element['suffix'], NULL, $element_state);
+    form_set_value($element, $value, $element_state);
+  }
+
+  return $element;
+}
+
+/**
+ * Validates postal code of Japanese format.
+ */
+function _addressfield_jp_postal_code_valid($value) {
+  if (!preg_match("/^\d{3}(-)?\d{4}$/", $value)) {
+    return FALSE;
+  }
+
+  $prefix = substr($value, 0, 3);
+  if (strpos(ADDRESSFIELD_JP_EXCLUDE_CODES, $prefix) !== FALSE) {
+    return FALSE;
+  }
+
+  return TRUE;
+}
+
+/**
+ * Implements hook_theme().
+ */
+function addressfield_jp_theme() {
+  return array(
+    'addressfield_jp_postal_code' => array('render element' => 'element'),
+  );
+}
+
+/**
+ * Returns HTML for a postal code form element.
+ */
+function theme_addressfield_jp_postal_code($variables) {
+  $element = $variables['element'];
+
+  $attributes = array();
+  if (isset($element['#id'])) {
+    $attributes['id'] = $element['#id'];
+  }
+  if (!empty($element['#attributes']['class'])) {
+    $attributes['class'] = (array) $element['#attributes']['class'];
+  }
+  $attributes['class'][] = 'container-inline';
+
+  // Move element field_sub_suffix to last sub-element.
+  if (isset($element['#field_sub_suffix'])) {
+    $element['suffix']['#field_suffix'] = $element['#field_sub_suffix'];
+  }
+  // Move element field_sub_prefix to first sub-element.
+  if (isset($element['#field_sub_prefix'])) {
+    $element['prefix']['#field_prefix'] = $element['#field_sub_prefix'];
+  }
+
+  return '<div' . drupal_attributes($attributes) . '>' . drupal_render_children($element) . '</div>';
+}
+
+/**
+ * Generate address lookup.
+ */
+function _addressfield_jp_render_lookup($html_id, $class = array()) {
+  $text = variable_get('addressfield_jp_lookup_link_text', t('Address lookup'));
+  $options = array(
+    'fragment' => '',
+    'external' => TRUE,
+    'attributes' => array(
+      'id' => 'addressfield-jp-lookup-' . $html_id,
+      'class' => $class,
+    ),
+  );
+
+  return l($text, 'javascript:void(0)', $options);
+}
+
+/**
+ * Load the ajaxzip3 library and settings.
+ */
+function _addressfield_jp_js_data() {
+  $ajaxzip = $ajaxzip_json = '';
+  if (isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] == 'on') {
+    $ajaxzip = variable_get('addressfield_jp_ajaxzip_https', ADDRESSFIELD_JP_AJAXZIP_HTTPS);
+    $ajaxzip_json = variable_get('addressfield_jp_ajaxzip_json_https', '');
+  }
+  else {
+    $ajaxzip = variable_get('addressfield_jp_ajaxzip_http', ADDRESSFIELD_JP_AJAXZIP_HTTP);
+    $ajaxzip_json = variable_get('addressfield_jp_ajaxzip_json_http', '');
+  }
+
+  if (!empty($ajaxzip_json) && strpos($ajaxzip_json, 'http') !== 0) {
+    $ajaxzip_json = url($ajaxzip_json);
+  }
+
+  $data = array(
+    $ajaxzip,
+    drupal_get_path('module', 'addressfield_jp') . '/js/addressfield_jp.js',
+    array(
+      'data' => array(
+        'ajaxzip' => array(
+          'data' => $ajaxzip_json,
+          'exclude_codes' => ADDRESSFIELD_JP_EXCLUDE_CODES,
+          'error_message' => variable_get('addressfield_jp_invalid_postal_code', t('Invalid postal code format.')),
+        ),
+      ),
+      'type' => 'setting',
+    ),
+  );
+  return $data;
+}
+
+/**
+ * Implements hook_addressfield_administrative_areas_alter().
+ *
+ * Alter the administrative areas of JP if not exist.
+ */
+function addressfield_jp_addressfield_administrative_areas_alter(&$administrative_areas) {
+  if (empty($administrative_areas['JP'])) {
+    $administrative_areas['JP'] = array(
+      '13' => t('Tokyo'),
+      '14' => t('Kanagawa'),
+      '11' => t('Saitama'),
+      '12' => t('Chiba'),
+      '01' => t('Hokkaido'),
+      '02' => t('Aomori'),
+      '05' => t('Akita'),
+      '06' => t('Yamagata'),
+      '03' => t('Iwate'),
+      '04' => t('Miyagi'),
+      '07' => t('Fukushima'),
+      '08' => t('Ibaraki'),
+      '09' => t('Tochigi'),
+      '10' => t('Gunma'),
+      '19' => t('Yamanashi'),
+      '20' => t('Nagano'),
+      '15' => t('Niigata'),
+      '16' => t('Toyama'),
+      '17' => t('Ishikawa'),
+      '18' => t('Fukui'),
+      '22' => t('Shizuoka'),
+      '23' => t('Aichi'),
+      '21' => t('Gifu'),
+      '24' => t('Mie'),
+      '25' => t('Shiga'),
+      '26' => t('Kyoto'),
+      '27' => t('Osaka'),
+      '28' => t('Hyogo'),
+      '29' => t('Nara'),
+      '30' => t('Wakayama'),
+      '31' => t('Tottori'),
+      '32' => t('Shimane'),
+      '33' => t('Okayama'),
+      '34' => t('Hiroshima'),
+      '35' => t('Yamaguchi'),
+      '37' => t('Kagawa'),
+      '36' => t('Tokushima'),
+      '39' => t('Kochi'),
+      '38' => t('Ehime'),
+      '40' => t('Fukuoka'),
+      '41' => t('Saga'),
+      '42' => t('Nagasaki'),
+      '44' => t('Oita'),
+      '43' => t('Kumamoto'),
+      '45' => t('Miyazaki'),
+      '46' => t('Kagoshima'),
+      '47' => t('Okinawa'),
+    );
+  }
+}
