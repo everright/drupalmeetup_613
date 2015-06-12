@@ -61,8 +61,8 @@ projects[date][patch][] = "https://www.drupal.org/files/issues/date-default-valu
 projects[i18n][patch][] = "https://www.drupal.org/files/issues/i18n-php_notice_i18n_taxonomy-206327-10-D7.patch"
 
 ;Memcache status library
-libraries[memcache][download][type]= "get"
-libraries[memcache][download][url] = "http://git.php.net/?p=pecl/caching/memcache.git;a=blob_plain;f=memcache.php;hb=HEAD"
-libraries[memcache][download][filename] = "memcache.php.inc"
-libraries[memcache][directory_name] = "memcache"
+;libraries[memcache][download][type]= "get"
+;libraries[memcache][download][url] = "http://git.php.net/?p=pecl/caching/memcache.git;a=blob_plain;f=memcache.php;hb=HEAD"
+;libraries[memcache][download][filename] = "memcache.php.inc"
+;libraries[memcache][directory_name] = "memcache"
 
