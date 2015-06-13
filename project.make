@@ -3,7 +3,7 @@ core = 7.x
 
 ; Drupal core.
 projects[drupal][type] = core
-projects[drupal][version] = 7.36
+projects[drupal][version] = 7.37
 ; Drush make allows a default sub directory for all contributed projects.
 defaults[projects][subdir] = contrib
 ; Devel Modules
